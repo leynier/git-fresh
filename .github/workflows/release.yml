@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: ["package.json"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build project
+        run: bun run build
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Validate package
+        run: bun run validate
+
+      - name: Get package version
+        id: package-version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Package version: $VERSION"
+
+      - name: Check if tag exists
+        id: tag-check
+        run: |
+          VERSION="${{ steps.package-version.outputs.version }}"
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v$VERSION already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v$VERSION does not exist, proceeding with release"
+          fi
+
+      - name: Generate release notes
+        id: release-notes
+        if: steps.tag-check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.package-version.outputs.version }}"
+
+          # Buscar el tag anterior más reciente
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            # Generar changelog desde el último tag
+            COMMITS=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD)
+            COMPARE_URL="https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...v$VERSION"
+          else
+            # Si no hay tags anteriores, usar los últimos commits
+            COMMITS=$(git log --pretty=format:"- %s (%h)" -10)
+            COMPARE_URL="https://github.com/${{ github.repository }}/commits/v$VERSION"
+          fi
+
+          # Crear las notas de release
+          cat > release_notes.md << EOF
+          ## What's Changed
+
+          $COMMITS
+
+          **Full Changelog**: $COMPARE_URL
+
+          ## Installation
+
+          \`\`\`bash
+          npm install -g git-fresh
+          # or
+          npx git-fresh
+          \`\`\`
+          EOF
+
+          # Leer el contenido para el output
+          RELEASE_NOTES=$(cat release_notes.md)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: steps.tag-check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.package-version.outputs.version }}
+          name: Release v${{ steps.package-version.outputs.version }}
+          body: ${{ steps.release-notes.outputs.notes }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm
+        if: steps.tag-check.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "Publishing version ${{ steps.package-version.outputs.version }} to npm..."
+          npm publish --provenance
+          echo "✅ Successfully published to npm!"
+
+      - name: Success notification
+        if: steps.tag-check.outputs.exists == 'false'
+        run: |
+          echo "🚀 Release v${{ steps.package-version.outputs.version }} completed successfully!"
+          echo "📦 Published to npm: https://www.npmjs.com/package/git-fresh"
+          echo "🏷️ GitHub release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.package-version.outputs.version }}"
