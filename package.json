@@ -1,0 +1,55 @@
+{
+    "name": "git-fresh",
+    "version": "1.0.0",
+    "description": "Quickly reset your Git working directory to a clean state without re-cloning. Stashes, wipes, restores, and pops.",
+    "author": "Leynier Gutiérrez González",
+    "license": "MIT",
+    "keywords": [
+        "git",
+        "reset",
+        "clean",
+        "stash",
+        "restore",
+        "cli",
+        "tool"
+    ],
+    "main": "dist/index.js",
+    "bin": {
+        "git-fresh": "dist/cli.js"
+    },
+    "scripts": {
+        "build": "bunx tsc",
+        "dev": "bunx tsc --watch",
+        "prepublishOnly": "bun run build",
+        "test": "echo 'To test this package, run it in a Git repository: npx git-fresh'",
+        "validate": "bun run build && echo 'Package ready for publishing!'"
+    },
+    "files": [
+        "dist",
+        "readme.md",
+        "license"
+    ],
+    "engines": {
+        "node": ">=14.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.0.0"
+    },
+    "dependencies": {
+        "chalk": "^5.0.0",
+        "ora": "^7.0.0"
+    },
+    "packageManager": "bun@1.0.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/leynier/git-fresh.git"
+    },
+    "bugs": {
+        "url": "https://github.com/leynier/git-fresh/issues"
+    },
+    "homepage": "https://github.com/leynier/git-fresh#readme",
+    "publishConfig": {
+        "access": "public"
+    }
+}

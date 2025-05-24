@@ -1,0 +1,6 @@
+src/
+tsconfig.json
+bun.lock
+*.log
+.DS_Store
+.git/
