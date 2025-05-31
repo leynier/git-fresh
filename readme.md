@@ -195,6 +195,41 @@ Run "git stash list" to see your stashed changes
 - Node.js 14.0.0 or higher
 - Git repository
 
+## Cross-Platform Compatibility
+
+`git-fresh` is designed to work seamlessly across all major operating systems:
+
+### ✅ **Windows**
+
+- Supports both forward slashes (`/`) and backslashes (`\`) in file paths
+- Properly handles Windows-specific path separators
+- Console output is optimized for Windows terminals
+- Git commands are executed with `windowsHide` option for better UX
+
+### ✅ **macOS**
+
+- Full support for macOS file systems (HFS+, APFS)
+- Handles case-sensitive and case-insensitive file systems
+- Optimized for Unix-style paths
+
+### ✅ **Linux**
+
+- Works with all major Linux distributions
+- Supports various file systems (ext4, btrfs, etc.)
+- Handles Unix-style permissions and paths
+
+### Path Handling
+
+The tool automatically normalizes file paths to ensure consistent behavior across platforms:
+
+```bash
+# These are equivalent on any platform:
+npx git-fresh --ignore-glob-files "folder/file.txt"      # Unix-style
+npx git-fresh --ignore-glob-files "folder\file.txt"     # Windows-style
+```
+
+Both will be normalized internally and work correctly regardless of your operating system.
+
 ## Safety
 
 - Your Git history remains intact

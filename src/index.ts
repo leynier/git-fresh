@@ -4,6 +4,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { glob } from 'glob';
 import inquirer from 'inquirer';
 import ora from 'ora';
+import { join, posix } from 'path';
 
 interface GitFreshOptions {
   ignoreEnvFiles?: boolean;
@@ -23,7 +24,12 @@ function isGitRepository(): boolean {
  */
 function executeGitCommand(command: string): string {
   try {
-    return execSync(`git ${command}`, { encoding: 'utf-8', stdio: 'pipe' });
+    return execSync(`git ${command}`, { 
+      encoding: 'utf-8', 
+      stdio: 'pipe',
+      windowsHide: true, // Hide console window on Windows
+      maxBuffer: 1024 * 1024 // 1MB buffer for large outputs
+    });
   } catch (error) {
     throw new Error(`Git command failed: ${command}`);
   }
@@ -122,23 +128,42 @@ async function selectEnvFilesToIgnore(envFiles: string[]): Promise<string[]> {
  */
 function removeAllExceptGitAndIgnored(ignoredFiles: string[] = []): void {
   const items = readdirSync('.');
-  const ignoredSet = new Set(ignoredFiles);
+  
+  // Normalize all ignored file paths to use consistent separators across platforms
+  const normalizedIgnoredFiles = ignoredFiles.map(file => {
+    // Use posix.normalize to ensure forward slashes for consistent comparison
+    return posix.normalize(file.replace(/\\/g, '/'));
+  });
+  const ignoredSet = new Set(normalizedIgnoredFiles);
+  
+  // Function to normalize path to use forward slashes for consistent comparison
+  function normalizePath(path: string): string {
+    // Convert to forward slashes and normalize
+    return posix.normalize(path.replace(/\\/g, '/'));
+  }
+  
+  // Function to join paths in a cross-platform way but normalize for comparison
+  function joinAndNormalize(...paths: string[]): string {
+    return normalizePath(join(...paths));
+  }
   
   // Function to check if a path should be preserved
   function shouldPreservePath(itemPath: string): boolean {
+    const normalizedItemPath = normalizePath(itemPath);
+    
     // Always preserve .git
-    if (itemPath === '.git') {
+    if (normalizedItemPath === '.git') {
       return true;
     }
     
     // Check exact match with ignored files
-    if (ignoredSet.has(itemPath)) {
+    if (ignoredSet.has(normalizedItemPath)) {
       return true;
     }
     
     // Check if any ignored file is inside this directory
-    for (const ignoredFile of ignoredFiles) {
-      if (ignoredFile.startsWith(itemPath + '/')) {
+    for (const ignoredFile of normalizedIgnoredFiles) {
+      if (ignoredFile.startsWith(normalizedItemPath + '/')) {
         return true;
       }
     }
@@ -152,7 +177,9 @@ function removeAllExceptGitAndIgnored(ignoredFiles: string[] = []): void {
       const dirItems = readdirSync(dirPath);
       
       for (const item of dirItems) {
-        const itemPath = dirPath === '.' ? item : `${dirPath}/${item}`;
+        // Use join for proper path construction, then normalize for comparison
+        const itemPath = dirPath === '.' ? item : join(dirPath, item);
+        const normalizedItemPath = normalizePath(itemPath);
         
         if (shouldPreservePath(itemPath)) {
           continue; // Skip this item as it should be preserved
@@ -163,8 +190,8 @@ function removeAllExceptGitAndIgnored(ignoredFiles: string[] = []): void {
           if (stats.isDirectory()) {
             // Check if this directory contains any files we need to preserve
             let hasPreservedContent = false;
-            for (const ignoredFile of ignoredFiles) {
-              if (ignoredFile.startsWith(itemPath + '/')) {
+            for (const ignoredFile of normalizedIgnoredFiles) {
+              if (ignoredFile.startsWith(normalizedItemPath + '/')) {
                 hasPreservedContent = true;
                 break;
               }
@@ -220,6 +247,14 @@ export async function gitFresh(options: GitFreshOptions = {}): Promise<void> {
   if (!isGitRepository()) {
     throw new Error('This is not a Git repository. Please run this command in a Git repository.');
   }
+
+  // Platform-specific checks and adjustments
+  const platform = process.platform;
+  const isWindows = platform === 'win32';
+  const isUnix = platform === 'linux' || platform === 'darwin';
+  
+  // Log platform info for debugging (only in verbose mode if needed)
+  // console.log(chalk.gray(`Platform: ${platform} | Windows: ${isWindows} | Unix: ${isUnix}`));
 
   let filesToIgnore: string[] = [];
 
