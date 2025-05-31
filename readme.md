@@ -60,6 +60,52 @@ Or if installed globally:
 git-fresh
 ```
 
+### Command Line Options
+
+You can use various options to customize the behavior of `git-fresh`:
+
+#### `--ignore-env-files`
+
+Protects environment files from being removed during the reset process. This includes files matching patterns like `.env`, `.env.*`, `*.env`, and `.*.env`.
+
+```bash
+npx git-fresh --ignore-env-files
+```
+
+When this option is used, you'll be prompted to choose which environment files to protect, unless you also use `--skip-confirmation`.
+
+#### `--skip-confirmation`
+
+When used with `--ignore-env-files`, this option skips the interactive confirmation and automatically protects all detected environment files.
+
+```bash
+npx git-fresh --ignore-env-files --skip-confirmation
+```
+
+#### `--ignore-glob-files <pattern>`
+
+Protects files matching the specified glob pattern from being removed during the reset process. This is useful for protecting specific files or file types that you want to keep.
+
+```bash
+# Protect all .config files
+npx git-fresh --ignore-glob-files "*.config"
+
+# Protect all files in a specific directory
+npx git-fresh --ignore-glob-files "temp/**"
+
+# Protect files with specific extensions
+npx git-fresh --ignore-glob-files "**/*.{log,tmp}"
+```
+
+#### Combining Options
+
+You can combine multiple options as needed:
+
+```bash
+# Protect both env files and custom glob pattern
+npx git-fresh --ignore-env-files --ignore-glob-files "*.local" --skip-confirmation
+```
+
 ### What happens when you run git-fresh?
 
 The tool will output progress information as it performs each step:

@@ -1,7 +1,15 @@
 import chalk from 'chalk';
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, statSync } from 'fs';
+import { glob } from 'glob';
+import inquirer from 'inquirer';
 import ora from 'ora';
+
+interface GitFreshOptions {
+  ignoreEnvFiles?: boolean;
+  skipConfirmation?: boolean;
+  ignoreGlobFiles?: string;
+}
 
 /**
  * Checks if the current directory is a Git repository
@@ -34,13 +42,90 @@ function hasChangesToStash(): boolean {
 }
 
 /**
- * Removes all files and directories except .git
+ * Finds environment files matching various patterns
  */
-function removeAllExceptGit(): void {
+async function findEnvFiles(): Promise<string[]> {
+  const patterns = [
+    '.env',
+    '.env.*',
+    '*.env',
+    '.*.env',
+    '**/.env',
+    '**/.env.*',
+    '**/.*env',
+    '**/*.env'
+  ];
+  
+  const envFiles = new Set<string>();
+  
+  for (const pattern of patterns) {
+    try {
+      const matches = await glob(pattern, { 
+        dot: true,
+        ignore: ['node_modules/**', '.git/**']
+      });
+      matches.forEach(file => envFiles.add(file));
+    } catch (error) {
+      // Ignore glob errors for individual patterns
+    }
+  }
+  
+  return Array.from(envFiles).sort();
+}
+
+/**
+ * Prompts user to select which env files to ignore
+ */
+async function selectEnvFilesToIgnore(envFiles: string[]): Promise<string[]> {
+  if (envFiles.length === 0) {
+    return [];
+  }
+
+  console.log(chalk.yellow('\n🔒 Environment files detected:'));
+  envFiles.forEach((file: string) => {
+    console.log(chalk.gray(`   ${file}`));
+  });
+
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do with these environment files?',
+      choices: [
+        { name: 'Ignore all (recommended)', value: 'all' },
+        { name: 'Select individually', value: 'select' },
+        { name: 'Ignore none (remove all)', value: 'none' }
+      ],
+      default: 'all'
+    }
+  ]);
+
+  if (action === 'all') {
+    return envFiles;
+  } else if (action === 'none') {
+    return [];
+  } else {
+    const { selectedFiles } = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'selectedFiles',
+        message: 'Select files to ignore (keep safe):',
+        choices: envFiles.map(file => ({ name: file, value: file, checked: true })),
+      }
+    ]);
+    return selectedFiles;
+  }
+}
+
+/**
+ * Removes all files and directories except .git and ignored files
+ */
+function removeAllExceptGitAndIgnored(ignoredFiles: string[] = []): void {
   const items = readdirSync('.');
+  const ignoredSet = new Set(ignoredFiles);
   
   for (const item of items) {
-    if (item === '.git') {
+    if (item === '.git' || ignoredSet.has(item)) {
       continue;
     }
     
@@ -58,14 +143,72 @@ function removeAllExceptGit(): void {
 }
 
 /**
+ * Finds files matching the specified glob pattern
+ */
+async function findGlobFiles(pattern: string): Promise<string[]> {
+  try {
+    const matches = await glob(pattern, { 
+      dot: true,
+      ignore: ['node_modules/**', '.git/**']
+    });
+    return matches.sort();
+  } catch (error) {
+    console.warn(chalk.yellow(`Warning: Could not process glob pattern "${pattern}"`));
+    return [];
+  }
+}
+
+/**
  * Main function that performs the git fresh operation
  */
-export async function gitFresh(): Promise<void> {
+export async function gitFresh(options: GitFreshOptions = {}): Promise<void> {
   console.log(chalk.blue.bold('🚀 Git Fresh - Resetting working directory\n'));
 
   // Check if we're in a git repository
   if (!isGitRepository()) {
     throw new Error('This is not a Git repository. Please run this command in a Git repository.');
+  }
+
+  let filesToIgnore: string[] = [];
+
+  // Handle glob pattern files if provided
+  if (options.ignoreGlobFiles) {
+    const globFiles = await findGlobFiles(options.ignoreGlobFiles);
+    if (globFiles.length > 0) {
+      filesToIgnore.push(...globFiles);
+      console.log(chalk.green(`🔒 Protecting ${globFiles.length} file(s) matching pattern "${options.ignoreGlobFiles}":`));
+      globFiles.forEach(file => {
+        console.log(chalk.gray(`   ✓ ${file}`));
+      });
+    } else {
+      console.log(chalk.gray(`ℹ No files found matching pattern "${options.ignoreGlobFiles}"`));
+    }
+  }
+
+  // Handle environment files if requested
+  if (options.ignoreEnvFiles) {
+    const envFiles = await findEnvFiles();
+    
+    if (envFiles.length > 0) {
+      if (options.skipConfirmation) {
+        filesToIgnore.push(...envFiles);
+        console.log(chalk.green(`🔒 Protecting ${envFiles.length} environment file(s) from removal`));
+        envFiles.forEach(file => {
+          console.log(chalk.gray(`   ✓ ${file}`));
+        });
+      } else {
+        const selectedEnvFiles = await selectEnvFilesToIgnore(envFiles);
+        filesToIgnore.push(...selectedEnvFiles);
+        if (selectedEnvFiles.length > 0) {
+          console.log(chalk.green(`\n🔒 Will protect ${selectedEnvFiles.length} environment file(s):`));
+          selectedEnvFiles.forEach(file => {
+            console.log(chalk.gray(`   ✓ ${file}`));
+          });
+        }
+      }
+    } else {
+      console.log(chalk.gray('ℹ No environment files found'));
+    }
   }
 
   let stashCreated = false;
@@ -86,9 +229,9 @@ export async function gitFresh(): Promise<void> {
       console.log(chalk.gray('ℹ No changes to stash'));
     }
 
-    // Step 2: Remove all files except .git
-    const removeSpinner = ora('Removing all files except .git...').start();
-    removeAllExceptGit();
+    // Step 2: Remove all files except .git and ignored files
+    const removeSpinner = ora('Removing files except .git and protected files...').start();
+    removeAllExceptGitAndIgnored(filesToIgnore);
     removeSpinner.succeed(chalk.green('✓ Files removed successfully'));
 
     // Step 3: Restore all files from git
@@ -109,6 +252,10 @@ export async function gitFresh(): Promise<void> {
     }
 
     console.log(chalk.green.bold('\n🎉 Git working directory reset successfully!'));
+    
+    if (filesToIgnore.length > 0) {
+      console.log(chalk.cyan(`\n🔒 Protected files were preserved and remain untouched.`));
+    }
     
   } catch (error) {
     throw new Error(`Failed to reset Git working directory: ${error instanceof Error ? error.message : String(error)}`);
