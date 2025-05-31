@@ -124,22 +124,74 @@ function removeAllExceptGitAndIgnored(ignoredFiles: string[] = []): void {
   const items = readdirSync('.');
   const ignoredSet = new Set(ignoredFiles);
   
-  for (const item of items) {
-    if (item === '.git' || ignoredSet.has(item)) {
-      continue;
+  // Function to check if a path should be preserved
+  function shouldPreservePath(itemPath: string): boolean {
+    // Always preserve .git
+    if (itemPath === '.git') {
+      return true;
     }
     
+    // Check exact match with ignored files
+    if (ignoredSet.has(itemPath)) {
+      return true;
+    }
+    
+    // Check if any ignored file is inside this directory
+    for (const ignoredFile of ignoredFiles) {
+      if (ignoredFile.startsWith(itemPath + '/')) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  // Function to recursively process directories
+  function processDirectory(dirPath: string): void {
     try {
-      const stats = statSync(item);
-      if (stats.isDirectory()) {
-        rmSync(item, { recursive: true, force: true });
-      } else {
-        rmSync(item, { force: true });
+      const dirItems = readdirSync(dirPath);
+      
+      for (const item of dirItems) {
+        const itemPath = dirPath === '.' ? item : `${dirPath}/${item}`;
+        
+        if (shouldPreservePath(itemPath)) {
+          continue; // Skip this item as it should be preserved
+        }
+        
+        try {
+          const stats = statSync(itemPath);
+          if (stats.isDirectory()) {
+            // Check if this directory contains any files we need to preserve
+            let hasPreservedContent = false;
+            for (const ignoredFile of ignoredFiles) {
+              if (ignoredFile.startsWith(itemPath + '/')) {
+                hasPreservedContent = true;
+                break;
+              }
+            }
+            
+            if (hasPreservedContent) {
+              // Process the directory contents recursively
+              processDirectory(itemPath);
+            } else {
+              // Remove the entire directory
+              rmSync(itemPath, { recursive: true, force: true });
+            }
+          } else {
+            // Remove the file
+            rmSync(itemPath, { force: true });
+          }
+        } catch (error) {
+          console.warn(chalk.yellow(`Warning: Could not remove ${itemPath}`));
+        }
       }
     } catch (error) {
-      console.warn(chalk.yellow(`Warning: Could not remove ${item}`));
+      console.warn(chalk.yellow(`Warning: Could not read directory ${dirPath}`));
     }
   }
+  
+  // Start processing from the root directory
+  processDirectory('.');
 }
 
 /**

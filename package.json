@@ -1,6 +1,6 @@
 {
     "name": "git-fresh",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Quickly reset your Git working directory to a clean state without re-cloning. Stashes, wipes, restores, and pops.",
     "author": "Leynier Gutiérrez González",
     "license": "MIT",
