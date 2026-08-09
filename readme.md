@@ -1,280 +1,161 @@
 # git-fresh
 
-Quickly reset your Git working directory to a clean state without re-cloning. Stashes, wipes, restores, and pops.
+Safely refresh a Git working directory without re-cloning or losing local changes.
 
-## Why git-fresh?
+`git-fresh` saves tracked and untracked changes in a uniquely identified stash, removes ignored build artifacts and caches, restores the committed tree, and reapplies that exact stash with its staged state. It verifies the result before removing the temporary stash.
 
-Many developers have the habit of deleting their entire project and running `git clone` again when they encounter issues with their working directory. This is unnecessary and time-consuming! Instead, `git-fresh` performs the following operations:
+## Requirements
 
-1. **Stash** your current changes (if any)
-2. **Remove** all files except the `.git` directory
-3. **Restore** all files from Git
-4. **Pop** the stashed changes back
-
-This achieves the same result as re-cloning but much faster and without losing your Git history or remotes.
+- Node.js 22.13.0 or newer
+- Git
+- A repository with at least one commit
+- Run the command from the repository root
 
 ## Installation
 
-You can run `git-fresh` directly using npx without installing it globally:
+Run it without installing:
 
 ```bash
 npx git-fresh
-```
-
-Or with other package managers:
-
-```bash
-# Using pnpm
-pnpm dlx git-fresh
-
-# Using yarn
-yarn dlx git-fresh
-
-# Using bun
-bunx git-fresh
 ```
 
 Or install it globally:
 
 ```bash
-npm install -g git-fresh
-# or with bun
-bun add -g git-fresh
-# or with pnpm
-pnpm add -g git-fresh
-# or with yarn
-yarn global add git-fresh
+npm install --global git-fresh
+git-fresh
 ```
 
-## Usage
+## Safe workflow
 
-Simply run the command in any Git repository:
+Preview the exact operation first:
 
 ```bash
-npx git-fresh
+git-fresh --dry-run
 ```
 
-Or if installed globally:
+Execute interactively:
 
 ```bash
 git-fresh
 ```
 
-### Command Line Options
-
-You can use various options to customize the behavior of `git-fresh`:
-
-#### `--ignore-env-files`
-
-Protects environment files from being removed during the reset process. This includes files matching patterns like `.env`, `.env.*`, `*.env`, and `.*.env`.
+The default answer to the destructive confirmation is **No**. For automation, acknowledge the cleanup explicitly:
 
 ```bash
-npx git-fresh --ignore-env-files
+git-fresh --yes
 ```
 
-When this option is used, you'll be prompted to choose which environment files to protect, unless you also use `--skip-confirmation`.
+When no terminal is available, the command requires `--yes` and exits with code 2 otherwise.
 
-#### `--skip-confirmation`
+## Protecting files
 
-When used with `--ignore-env-files`, this option skips the interactive confirmation and automatically protects all detected environment files.
+Protect detected environment files:
 
 ```bash
-npx git-fresh --ignore-env-files --skip-confirmation
+git-fresh --ignore-env-files
 ```
 
-#### `--ignore-glob-files <pattern>`
+Without `--yes`, the interactive command lets you protect all, none, or selected environment files. With `--yes`, all detected environment files are protected.
 
-Protects files matching the specified glob pattern from being removed during the reset process. This is useful for protecting specific files or file types that you want to keep.
+Protect one or more glob patterns by repeating the option:
 
 ```bash
-# Protect all .config files
-npx git-fresh --ignore-glob-files "*.config"
-
-# Protect all files in a specific directory
-npx git-fresh --ignore-glob-files "temp/**"
-
-# Protect files with specific extensions
-npx git-fresh --ignore-glob-files "**/*.{log,tmp}"
+git-fresh \
+  --ignore-glob-files '.env.production' \
+  --ignore-glob-files 'local-config/**'
 ```
 
-#### Combining Options
+Patterns must be relative and cannot escape the repository. Protected files can live inside otherwise ignored directories; their ignored siblings are still removed.
 
-You can combine multiple options as needed:
-
-```bash
-# Protect both env files and custom glob pattern
-npx git-fresh --ignore-env-files --ignore-glob-files "*.local" --skip-confirmation
-```
-
-### What happens when you run git-fresh?
-
-The tool will output progress information as it performs each step:
+### Options
 
 ```text
-🚀 Git Fresh - Resetting working directory
-
-✓ Changes stashed successfully
-✓ Files removed successfully  
-✓ Files restored successfully
-✓ Stashed changes applied successfully
-
-🎉 Git working directory reset successfully!
+--dry-run                       Show the safety plan without changing files
+--yes                           Approve cleanup and protect all detected env files
+--ignore-env-files              Protect detected environment files
+--ignore-glob-files <pattern>   Protect a glob pattern; may be repeated
 ```
 
-## Example Usage Scenarios
+`--skip-confirmation` remains as a deprecated alias for `--yes` in v2.
 
-### Scenario 1: Clean repository (no uncommitted changes)
+## What is preserved and removed
+
+Preserved:
+
+- Git history, branches, remotes, and existing stashes
+- Staged and unstaged tracked changes
+- Untracked, non-ignored files
+- Explicitly protected ignored files
+- Clean submodules and nested repositories
+
+Removed permanently:
+
+- Ignored files and directories that were not explicitly protected, such as dependency folders, build output, caches, and logs
+
+Because local changes are reapplied, `git status` can still be dirty after a successful refresh. “Fresh” refers to rebuilding the committed tree and ignored artifacts, not discarding the developer's work.
+
+## Safety guarantees
+
+- A directory merely named `.git` is not accepted as a repository.
+- Any Git inspection error blocks cleanup instead of being interpreted as a clean tree.
+- Dirty submodules or nested repositories abort the operation before mutation.
+- Active merges, rebases, cherry-picks, conflicts, and repositories without commits are rejected.
+- Only the temporary stash created by the current run can be applied or removed.
+- The original staged state is restored with `git stash apply --index`.
+- Cleanup, restore, or verification failures return a nonzero status.
+
+If restoring changes fails, the error includes the retained stash OID. Inspect it with:
 
 ```bash
-$ npx git-fresh
-🚀 Git Fresh - Resetting working directory
-
-ℹ No changes to stash
-✓ Files removed successfully
-✓ Files restored successfully
-
-🎉 Git working directory reset successfully!
+git stash show --stat <oid>
+git stash apply --index <oid>
 ```
 
-### Scenario 2: Repository with uncommitted changes
+The stash is never deleted until the restored Git status matches the pre-cleanup status.
 
-```bash
-$ npx git-fresh
-🚀 Git Fresh - Resetting working directory
+## Library API
 
-✓ Changes stashed successfully
-✓ Files removed successfully
-✓ Files restored successfully
-✓ Stashed changes applied successfully
+```ts
+import { gitFresh, GitFreshError } from "git-fresh";
 
-🎉 Git working directory reset successfully!
+try {
+  const result = await gitFresh({
+    cwd: "/path/to/repository",
+    dryRun: true,
+    ignoreEnvFiles: true,
+    ignoreGlobFiles: ["local-config/**"],
+  });
+  console.log(result.outcome, result.removedFiles);
+} catch (error) {
+  if (error instanceof GitFreshError) {
+    console.error(error.code, error.message);
+  }
+}
 ```
 
-### Scenario 3: Repository with conflicts during stash pop
+`gitFresh` returns `completed`, `dry-run`, or `cancelled`, plus the repository root, protected paths, ignored files selected for removal, and the temporary stash OID when one was created.
 
-```bash
-$ npx git-fresh
-🚀 Git Fresh - Resetting working directory
+## Exit codes
 
-✓ Changes stashed successfully
-✓ Files removed successfully
-✓ Files restored successfully
-⚠ Could not apply stashed changes (conflicts may exist)
-Run "git stash list" to see your stashed changes
-
-🎉 Git working directory reset successfully!
-```
-
-### Before and After
-
-**Before running git-fresh:**
-
-- Modified files: `README.md`, `src/index.js`
-- Untracked files: `temp.txt`, `debug.log`
-- Deleted files: `old-file.js` (was in git)
-- Working directory is "dirty"
-
-**After running git-fresh:**
-
-- All files are restored to their committed state
-- All untracked files are preserved (via stash)
-- All modified files are preserved (via stash)
-- Working directory is "clean" but changes are recoverable
-- Git history and remotes are unchanged
-
-## What it does
-
-1. **Checks** if you're in a Git repository
-2. **Stashes** any uncommitted changes (including untracked files)
-3. **Removes** all files and directories except `.git`
-4. **Restores** all files from the Git repository
-5. **Applies** the stashed changes back (if any were stashed)
-
-## Requirements
-
-- Node.js 14.0.0 or higher
-- Git repository
-
-## Cross-Platform Compatibility
-
-`git-fresh` is designed to work seamlessly across all major operating systems:
-
-### ✅ **Windows**
-
-- Supports both forward slashes (`/`) and backslashes (`\`) in file paths
-- Properly handles Windows-specific path separators
-- Console output is optimized for Windows terminals
-- Git commands are executed with `windowsHide` option for better UX
-
-### ✅ **macOS**
-
-- Full support for macOS file systems (HFS+, APFS)
-- Handles case-sensitive and case-insensitive file systems
-- Optimized for Unix-style paths
-
-### ✅ **Linux**
-
-- Works with all major Linux distributions
-- Supports various file systems (ext4, btrfs, etc.)
-- Handles Unix-style permissions and paths
-
-### Path Handling
-
-The tool automatically normalizes file paths to ensure consistent behavior across platforms:
-
-```bash
-# These are equivalent on any platform:
-npx git-fresh --ignore-glob-files "folder/file.txt"      # Unix-style
-npx git-fresh --ignore-glob-files "folder\file.txt"     # Windows-style
-```
-
-Both will be normalized internally and work correctly regardless of your operating system.
-
-## Safety
-
-- Your Git history remains intact
-- Uncommitted changes are safely stashed and restored
-- The `.git` directory is never touched
-- If conflicts occur during stash pop, your changes remain in the stash
+- `0`: completed, dry-run, or user cancellation without mutation
+- `1`: safety preflight or operational failure
+- `2`: non-interactive execution attempted without `--yes`
 
 ## Development
 
-This project uses Bun for package management:
-
 ```bash
-# Install dependencies
-bun install
-
-# Build the project
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run test:coverage
 bun run build
-
-# Validate the package is ready
-bun run validate
+bun run audit
 ```
 
-### Testing Locally
+`bun run test` enforces 100% coverage for lines, functions, and statements and writes an LCOV report to `coverage/lcov.info`. The explicit `bun run test:coverage` command produces the same report for discoverability.
 
-To test the package locally before publishing:
-
-1. Build the project: `bun run build`
-2. Create a test Git repository in a temporary directory
-3. Run the CLI directly: `/path/to/git-fresh/dist/cli.js`
-
-### Publishing
-
-To publish the package to npm:
-
-```bash
-# Build and validate
-bun run validate
-
-# Publish (requires npm account and authentication)
-npm publish
-```
-
-## Author
-
-Leynier Gutiérrez González
+The test suite combines focused unit tests with disposable Git repositories and covers the CLI, interactive environment-file selection, large status output, staged and unstaged changes, existing stashes, protected files, invalid repositories, and nested repository safety. The two-line executable wrapper in `src/bin.ts` is the only coverage exclusion; its delegated CLI behavior is fully tested through `runCli` and exercised by the package smoke test in CI.
 
 ## License
 

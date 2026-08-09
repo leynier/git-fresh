@@ -1,29 +1,92 @@
-#!/usr/bin/env node
+import { Command, Option } from "commander";
+import { createRequire } from "node:module";
+import {
+  GitFreshError,
+  gitFresh,
+  type GitFreshOptions,
+  type GitFreshResult,
+} from "./index.js";
 
-import { Command } from 'commander';
-import packageJson from '../package.json';
-import { gitFresh } from './index';
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version: string };
 
-const program = new Command();
+type GitFreshExecutor = (options: GitFreshOptions) => Promise<GitFreshResult>;
 
-program
-  .name('git-fresh')
-  .description('Quickly reset your Git working directory to a clean state without re-cloning')
-  .version(packageJson.version)
-  .option('--ignore-env-files', 'Protect environment files (.env, .env.*, *.env, .*.env) from being removed')
-  .option('--skip-confirmation', 'Skip confirmation when ignoring env files (ignores all by default)')
-  .option('--ignore-glob-files <pattern>', 'Protect files matching the specified glob pattern from being removed')
-  .action(async (options) => {
-    try {
-      await gitFresh({
-        ignoreEnvFiles: options.ignoreEnvFiles,
-        skipConfirmation: options.skipConfirmation,
-        ignoreGlobFiles: options.ignoreGlobFiles
-      });
-    } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    }
-  });
+export interface CliRuntime {
+  execute?: GitFreshExecutor;
+  error?: (...values: unknown[]) => void;
+}
 
-program.parse();
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+export async function runCli(
+  argv: readonly string[] = process.argv.slice(2),
+  runtime: CliRuntime = {},
+): Promise<number> {
+  const execute = runtime.execute ?? gitFresh;
+  const reportError = runtime.error ?? console.error;
+  let exitCode = 0;
+  const program = new Command();
+
+  program
+    .name("git-fresh")
+    .description(
+      "Safely refresh a Git working directory while preserving local changes",
+    )
+    .version(packageJson.version)
+    .option(
+      "--ignore-env-files",
+      "Protect detected environment files from cleanup",
+    )
+    .option(
+      "--yes",
+      "Approve the cleanup and protect all detected environment files",
+    )
+    .option("--dry-run", "Show the safety plan without changing files")
+    .addOption(
+      new Option(
+        "--ignore-glob-files <pattern>",
+        "Protect files matching a glob pattern",
+      )
+        .argParser(collect)
+        .default([]),
+    )
+    .addOption(new Option("--skip-confirmation").hideHelp())
+    .action(
+      async (options: {
+        ignoreEnvFiles?: boolean;
+        yes?: boolean;
+        dryRun?: boolean;
+        ignoreGlobFiles: string[];
+        skipConfirmation?: boolean;
+      }) => {
+        try {
+          await execute({
+            ignoreEnvFiles: options.ignoreEnvFiles,
+            yes: options.yes,
+            dryRun: options.dryRun,
+            ignoreGlobFiles: options.ignoreGlobFiles,
+            skipConfirmation: options.skipConfirmation,
+          });
+        } catch (error) {
+          if (error instanceof GitFreshError) {
+            reportError(`Error [${error.code}]: ${error.message}`);
+            if (error.details) reportError(error.details);
+            exitCode =
+              error.code === "NON_INTERACTIVE_CONFIRMATION_REQUIRED" ? 2 : 1;
+            return;
+          }
+          reportError(
+            "Error:",
+            error instanceof Error ? error.message : String(error),
+          );
+          exitCode = 1;
+        }
+      },
+    );
+
+  await program.parseAsync([...argv], { from: "user" });
+  return exitCode;
+}
